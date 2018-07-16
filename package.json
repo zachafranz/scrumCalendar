@@ -1,0 +1,20 @@
+{
+  "name": "scrumcalendar",
+  "version": "1.0.0",
+  "description": "A scrum calendar for the tech industry to have a work flow displayed and organized.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "DYZ",
+  "license": "ISC",
+  "dependencies": {
+    "node": "^10.6.0",
+    "postgrest-client": "^1.1.2",
+    "react": "^16.4.1",
+    "react-dom": "^16.4.1",
+    "react-router": "^4.3.1",
+    "webpack": "^4.16.1",
+    "webpack-dev-server": "^3.1.4"
+  }
+}
