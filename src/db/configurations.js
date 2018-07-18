@@ -12,9 +12,41 @@ sequelize.authenticate()
   .then(() => console.log('Connection has been established successfully.'))
   .catch(err => console.error('Unable to connect to the database:', err));
 
+const Event = sequelize.define('event', {
+  eventDate: Sequelize.DATE,
+  eventName: Sequelize.STRING,
+  eventDesc: Sequelize.STRING,
+  userId: Sequelize.INTEGER,
+  id: {
+    type: Sequelize.INTEGER,
+    primaryKey: true,
+    autoIncrement: true
+  }
+});
+
+const User = sequelize.define('user', {
+  username: Sequelize.STRING,
+  userPassword: Sequelize.STRING,
+  id: {
+    type: Sequelize.INTEGER,
+    primaryKey: true,
+    autoIncrement: true
+  } 
+});
+
+User.sync({force: OVERRIDE_CURRENT_TABLES})
+  .then(() => console.log('Path: db/userModel.js; Function: User.sync(); Comment: User table created'))
+  .catch((error) => console.log('Path: db/userModel.js; Function: User.sync(); Comment: ERROR'));
+
+Event.sync({force: OVERRIDE_CURRENT_TABLES})
+  .then(() => console.log('Path: db/eventModel.js; Function: Event.sync(); Comment: Event table created'))
+  .catch((error) => console.log('Path: db/eventModel.js; Function: Event.sync(); Comment: ERROR'));
+
 module.exports =  {
   sequelize,
   OVERRIDE_CURRENT_TABLES,
   Sequelize,
+  Event,
+  User,
 }
 
