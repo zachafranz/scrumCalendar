@@ -1,186 +1,252 @@
-const express = require('express');
-const path = require('path');
-const Sequelize = require('sequelize');
-const bodyParser = require('body-parser');
-const cookieParser = require('cookie-parser');
+let { sequelize, OVERRIDE_CURRENT_TABLES, User, Event } = require('./../db/configurations.js');
+// const User = require('./../db/userModel.js');
+// const Event = require('./../db/eventModel.js');
+const http = require('http');
 
-// SQL Stuff
-// Note the URL contains the username and password within it
-// Had to speficfy the dialect AND had to add it to the node modules!!!!
-const elephantSqlUri = 'postgres://jincewde:c5sCQ2ClMS15ak2irIc3k61G4XXwwHQA@stampy.db.elephantsql.com:5432/jincewde';
-const elephantSqlOptions = {dialect: 'postgres'};
-const sequelize = new Sequelize(elephantSqlUri, elephantSqlOptions);
+// Cookie Parser stolen from stack Overflow
+// https://stackoverflow.com/questions/3393854/get-and-set-a-single-cookie-with-node-js-http-server
+function parseCookies (request) {
+    var list = {},
+        rc = request.headers.cookie;
 
-// Verify conncetion
-sequelize
-  .authenticate()
-  .then(() => {
-    console.log('Connection has been established successfully.');
-  })
-  .catch(err => {
-    console.error('Unable to connect to the database:', err);
+    rc && rc.split(';').forEach(function( cookie ) {
+        var parts = cookie.split('=');
+        list[parts.shift().trim()] = decodeURI(parts.join('='));
+    });
+
+    return list;
+}
+
+
+const server = http.createServer((request, response) => {
+  
+  // ZF Comments: 
+  // 1. is "request.headers" necessary anywhere or can we just do headers since we assigned that on the line below
+  // 2. Fix user login so that error message is the same regardless of failure to prevent attacks
+  // 3. Confused about the response to successfuly login
+
+  // To Test Thoroughly, using postman:
+  // 0. Clear cookies
+  // 1. Add user (user is in db and we have a cookie)
+  // 2. Clear cookies, and login as created user
+  // 3. Create events x3
+  // 4. Read Events
+  // 5. Modify one event
+  // 6. Delete one event
+  // 7. Read events again
+  // 8. Clear cookies
+  // 9. Test bad username
+  // 10. Test bad password
+
+  const { method, url, headers } = request;
+  const cookies = parseCookies(request);
+   
+    // ************** ERROR HANDLERS **************  
+  request.on('error', (error) => {
+    response.setHeader(400, { 'Content-Type': 'text/plain'});
+    console.error('error durring request', error);
+  });
+  
+  response.on('error', (error) => {
+    response.setHeader(400, { 'Content-Type': 'text/plain'});
+    console.error('error from response');
   });
 
-const OVERRIDE_CURRENT_TABLES = false;
+  // ************** GET **************
+  // 1) we need to launch the HTML file -> figure out how we can use .static or something,
+  //    because we need to server all client side files
+  // 2) get /event grab all events
+  //    we will need to add a middleware to grab all events 
 
-// This could (and should) be modularized
-// Create models (tables)
-const User = sequelize.define('user', {
-  userName: Sequelize.STRING,
-  userPass: Sequelize.STRING,
-  id: {
-    type: Sequelize.INTEGER,
-    primaryKey: true,
-    autoIncrement: true
+  if(method === 'GET' && url === '/event') {
+  	console.log('In Get Event with headers', request.headers, 'also headers are', headers);
+  	console.log('cookies are', cookies);
+
+    Event.findAll({ where: { userId: cookies.userId }})
+    .then((json) => {
+      // console.log('got data', json);
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.write(JSON.stringify(json));
+      response.end();
+    })
+    .catch((error) => {
+      console.error('error in GET /event', error);
+      response.writeHead(400, { 'Content-Type': 'text/plain' });
+      response.write('Failed to get calender');
+      response.end();  
+    })
+  }
+
+  // ************** POST **************
+  if(method === 'POST' && url === '/signup') {
+    let body = [];
+    let parsedData = null;
+    request.on('data', (chunk) => {
+      body.push(chunk);
+    }).on('end', () => {
+      body = Buffer.concat(body).toString();
+      parsedData = JSON.parse(body);
+
+      console.log('In Post signup with body', parsedData);
+
+      User.create({
+        userName: parsedData.userName,
+        userPass: parsedData.userPass
+      })
+      .then((savedObj) => {
+        console.log('successfully saved a user', savedObj.dataValues);
+        // let cookie = { 'userId': savedObj.dataValues.id };
+        response.writeHead(200, { 'Set-Cookie': `userId=${savedObj.dataValues.id}`, 'Content-Type': 'text/plain' });
+        response.write('The new user has been saved to the database');
+        response.end();
+      })
+      .catch((error) => {
+        console.error('error in POST /signup', error);
+        response.writeHead(400);
+        response.write('Could not save new user to the database');
+        response.end();  
+      })
+    })
+  }
+
+  if(method === 'POST' && url === '/login') {
+    let body = [];
+    let parsedData = null;
+    request.on('data', (chunk) => {
+      body.push(chunk);
+    }).on('end', () => {
+      body = Buffer.concat(body).toString();
+      parsedData = JSON.parse(body);
+
+      console.log('In Post login with body', parsedData);
+
+      User.findOne({ where: { userName: parsedData.userName }})
+      .then((result) => {
+        console.log('the result from the database', result);
+        if(result === null) {
+          response.writeHead(400, {'Content-Type': 'text/plain'})
+          response.write('username cannot be found in the database');
+          response.end();
+        } else if(parsedData.userPass !== result.dataValues.userPass) {
+          response.writeHead(401, {'Content-Type': 'text/plain'})
+          response.write('invalid password, please try again');
+          response.end();
+        } else {
+          // Ex: Set-Cookie: name1=value1,name2=value2; Expires=Wed, 09 Jun 2021 10:18:14 GMT
+          // let cookie = { 'userId': result.dataValues.id };
+          response.writeHead(200, { 'Set-Cookie': `userId=${result.dataValues.id}`, 'Content-Type': 'text/plain' });
+          // response.writeHead(301, { Location : '/placeholderUrl' })
+          response.write('valid credentials, access granted');
+          response.end();
+        }
+      })
+      .catch((error) => {
+         console.error('error in POST /login', error);
+         response.writeHead(400, { 'Content-Type': 'text/plain '});
+         response.end();  
+      })
+    })
+  }
+
+  // POST: EVENT CREATION -------------- 
+  if(method === 'POST' && url === '/event') {
+    let body = [];
+    let parsedData = null;
+    request.on('data', (chunk) => {
+      body.push(chunk);
+    }).on('end', () => {
+      body = Buffer.concat(body).toString();
+      parsedData = JSON.parse(body);
+
+      console.log('In Post event with body', parsedData, 'with parsed cookies', cookies);
+
+      Event.create({
+        eventDate: new Date(parsedData.eventDate),
+        eventName: parsedData.eventName,
+        eventDesc: parsedData.eventDesc,
+        userId: cookies.userId 							// this should be a cookie i think
+      })
+      .then((savedObj) => {
+        response.writeHead(200, { 'Content-Type': 'text/plain' });
+        response.write('an event has been saved to the database');
+        response.end();
+      })
+      .catch((error) => {
+        console.error('error in POST /event', error);
+        response.writeHead(400);
+        response.end();
+      });
+    })
+  }
+
+  // ************** PUT **************
+
+  if(method === 'PUT' && url === '/event') {
+    let body = [];
+    let parsedData = null;
+    request.on('data', (chunk) => {
+      body.push(chunk);
+    }).on('end', () => {
+      body = Buffer.concat(body).toString();
+      parsedData = JSON.parse(body);
+
+      console.log('In Put event with body', parsedData);
+
+      let updatedDataRequest = {
+        eventDate: new Date(parsedData.eventDate),
+        eventName: parsedData.eventName,
+        eventDesc: parsedData.eventDesc
+      };
+      let existingDataLocation = {
+        where: { id: parsedData.eventId },
+        returning: true
+      };
+      Event.update(updatedDataRequest, existingDataLocation)
+      .then((updatedObject) => { 
+        console.log('successfuly updated/saved an event',updatedObject);
+        response.writeHead(200, { 'Content-Type': 'text/plain' });
+        response.write('event in database has been updated');
+        response.end();
+      })
+      .catch((error) => {
+        console.error('error in POST /event', error);
+        response.writeHead(400);
+        response.end();
+      })
+    })
+  }
+
+  // ************** DELETE **************
+  if(method === 'DELETE' && url === '/event') {
+    let body = [];
+    let parsedData = null;
+    request.on('data', (chunk) => {
+      body.push(chunk);
+    }).on('end', () => {
+      body = Buffer.concat(body).toString();
+      parsedData = JSON.parse(body);
+
+      console.log('In Delete event with body', parsedData);
+
+      Event.destroy({ where: { id: parsedData.eventId }})
+      .then((numberDeleted) => {
+        console.log(`successfully deleted ${numberDeleted} events`);
+        response.writeHead(200, { 'Content-Type': 'text/plain' });
+        response.write('the event has been deleted'); 
+        response.end();
+      })
+      .catch((error) => {
+        console.error('error in DELETE /event', error);
+        response.writeHead(400);
+        response.end();
+      });
+    })
   }
 });
 
-const Event = sequelize.define('event', {
-  eventDate: Sequelize.DATE,
-  eventName: Sequelize.STRING,
-  eventDesc: Sequelize.STRING,
-  userId: Sequelize.INTEGER,
-  id: {
-    type: Sequelize.INTEGER,
-    primaryKey: true,
-    autoIncrement: true
-  }
+server.listen(3000, (error) => {
+  if(error) console.error('error in connection to port 3000');
+  else {
+    console.log('Listening on port 3000');
+  }   
 });
-
-
-// Sync (Add) Models (Tables) to database
-// If force is true, the Model will run DROP TABLE IF EXISTS, before it tries to create its own table
-User.sync({force: OVERRIDE_CURRENT_TABLES}).then(() => {
-  console.log('User table created', this);
-});
-
-Event.sync({force: OVERRIDE_CURRENT_TABLES}).then(() => {
-  console.log('Event table created', this);
-});
-
-
-// Express Stuff
-const app = express();
-
-app.use(bodyParser.json());
-app.use(cookieParser());
-
-app.use('/', express.static(path.join(__dirname, "./../../dist")))  
-
-
-// All of the following REST middlware should probably be modularized
-app.post('/signup', (req, res) => {
-  User
-    .create({
-      userName: req.body.userName,
-      userPass: req.body.userPass
-    })
-    .then((savedObj) => {
-      console.log('successfully saved an user', savedObj.dataValues);
-      res.cookie('userId', savedObj.dataValues.id);
-      res.send('Saved User');
-    })
-    .catch((err) => {
-      console.log('unable to save user', err);
-      res.send('fuck');
-    });
-})
-
-
-app.post('/login', (req, res) => {
-  console.log('In login user with', req.body); // req.cookies.userId
-
-  User
-    .findOne({
-      where: { userName: req.body.userName }
-    })
-    .then((results) => {
-      if (results === null) return res.send('Nope. Try Again'); // Did not find any user by that username
-
-      console.log('results of findOne', results.dataValues); // nned to test userPass
-      if (req.body.userPass !== results.dataValues.userPass) return res.send('Nope. Try Again Loser');  // Wrong Pass
-      
-      res.cookie('userId', results.dataValues.id);
-      res.send('Yea sick login');
-    })
-})
-
-
-app.get('/event', (req, res) => {
-  console.log('In get event with', req.cookies); // req.cookies.userId
-
-  Event
-    .findAll({
-      where: { userId: req.cookies.userId }
-    })
-    .then((data) => {
-      console.log('Found all the stuff', data);
-      res.send('Got data');
-    })
-});
-
-
-app.post('/event', (req, res) => {
-  console.log('In post event with', req.body, 'and', req.cookies);
-
-  // Example of using whitelisting (?) as a small security layer
-  Event
-    .create({
-      eventDate: new Date(req.body.eventDate),
-      eventName: req.body.eventName,
-      eventDesc: req.body.eventDesc,
-      userId: req.cookies.userId
-    })
-    .then((savedObj) => {
-      console.log('successfully saved an event', savedObj);
-      res.send('Saved Event');
-    })
-    .catch((err) => {
-      console.log('unable to save event', err);
-      res.send('fuck');
-    });
-});
-
-
-app.put('/event', (req, res) => {
-  console.log('In put event with', req.body);
-  
-  Event
-    .update(
-      {
-        eventDate: new Date(req.body.eventDate),
-        eventName: req.body.eventName,
-        eventDesc: req.body.eventDesc
-      },
-      {
-      	where: { id: req.body.eventId },
-      	returning: true
-      }
-    )
-    .then((updateObj) => {
-      // If the uuid does not match anything, updatedObj is return with first argument === 0
-      console.log('successfully saved an event', updateObj);
-      res.send('Updated Obj');
-    })
-});
-
-
-app.delete('/event', (req, res) => {
-  console.log('In delete event with', req.body);
-
-  Event
-    .destroy(
-      { where: { id: req.body.eventId } }
-    )
-    .then((numberDeleted) => {
-      // If the uuid does not match anything, updatedObj is return with first argument === 0 (as in no objects updated)
-      console.log(`successfully deleted ${numberDeleted} events`);
-      res.send('Deleted Events');
-    })
-});
-
-
-app.listen(3000, (err) => {
-    if (err) {console.log('error in connecting to port 3000:', err)}
-    else {console.log('Listening on port 3000!')}
-})
